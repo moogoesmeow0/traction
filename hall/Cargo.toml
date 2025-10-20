@@ -1,0 +1,9 @@
+[package]
+name = "hall"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+adxl345_driver2 = "2.0.1"
+anyhow = "1.0.100"
+rppal = { version = "0.22.1", features = ["embedded-hal"] }
