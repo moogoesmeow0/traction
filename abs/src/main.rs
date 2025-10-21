@@ -4,6 +4,7 @@ use adxl345_driver2::{Adxl345, Adxl345Reader, Adxl345Writer, i2c::Device};
 use anyhow::{Result, *};
 use rppal::gpio::{Gpio, InputPin, Pin};
 use rppal::{i2c::I2c, system::DeviceInfo};
+use std::collections::VecDeque;
 use std::result::Result::Ok;
 use std::{
     sync::mpsc::{self, Receiver, Sender, channel},
@@ -46,6 +47,8 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
 
     let (transmitter, reciever) = channel::<f32>();
 
+    let mut speeds: VecDeque<(f32, f32)> = VecDeque::new();
+
     loop {
         let timer = time::Instant::now();
 
@@ -53,12 +56,15 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
             current_speed = speed;
         }
 
-        if pin.is_high() {
-            current_speed = frequency_to_speed(1.0 / timer.elapsed().as_secs_f32())
+        if let Ok(mag_speed) = reciever.try_recv() {
+            speeds.push_back((current_speed, timer.elapsed().as_secs_f32()));
+            if speeds.len() > 50 {
+                speeds.pop_front();
+            }
         }
 
         // Update frequency based on accelerometer readings
-        let has_grip = grip(adxl345.acceleration()?, current_speed);
+        let has_grip = grip(adxl345.acceleration()?, &speeds);
 
         // Send frequency update to main thread
         let msg = has_grip;
@@ -85,9 +91,7 @@ fn magnets(pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
         } else {
             transmitter.send(0.0).unwrap();
         }
-        transmitter.send(frequency_to_speed(frequency_to_speed(
-            1.0 / timer.elapsed().as_secs_f32(),
-        )));
+        transmitter.send((frequency_to_speed(1.0 / timer.elapsed().as_secs_f32())));
     }
 }
 
@@ -99,7 +103,9 @@ fn frequency_to_speed(frequency: f32) -> f32 {
 }
 
 /// Determine if grip is good based on wheel acceleration and bike acceleration
-fn grip(acceleration: (i16, i16, i16), speed: f32) -> bool {
+/// acceleration: (x, y, z) from accelerometer
+/// speeds: VecDeque of (speed, delta_time) tuples
+fn grip(acceleration: (i16, i16, i16), speeds: &VecDeque<(f32, f32)>) -> bool {
     return false;
 }
 
