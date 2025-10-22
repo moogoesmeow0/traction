@@ -68,13 +68,9 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
     let mut speeds: VecDeque<(f32, f32)> = VecDeque::new();
     let mut grip_state = GripState::new();
 
+    let mut timer = time::Instant::now();
+
     loop {
-        let timer = time::Instant::now();
-
-        if let Ok(speed) = reciever.try_recv() {
-            current_speed = speed;
-        }
-
         if let Ok(mag_speed) = reciever.try_recv() {
             speeds.push_back((mag_speed, timer.elapsed().as_secs_f32()));
             if speeds.len() > 50 {
@@ -93,6 +89,8 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
         if tx.send(msg).is_err() {
             break;
         }
+
+        timer = time::Instant::now();
     }
 
     Ok(())
@@ -101,17 +99,35 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
 fn magnets(pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
     let mut activated = false;
 
-    let timer = time::Instant::now();
+    let mut timer = time::Instant::now();
+
+    let mut queue: VecDeque<time::Instant> = VecDeque::new();
 
     loop {
         if pin.is_low() {
             // Magnet detected, idk why low means detected
-            transmitter.send(0.0).unwrap();
-        } else {
-            transmitter.send(0.0).unwrap();
+            queue.push_back(time::Instant::now());
+            timer = time::Instant::now();
         }
-        transmitter.send((frequency_to_speed(1.0 / timer.elapsed().as_secs_f32())));
-        let timer = time::Instant::now();
+
+        transmitter.send({
+            // calculate frequency by averaging last few intervals
+            if queue.len() < 2 {
+                0.0
+            } else {
+                while queue.len() > 5 {
+                    queue.pop_front();
+                }
+
+                let mut intervals = Vec::new();
+                for i in 1..queue.len() {
+                    let dt = queue[i].duration_since(queue[i - 1]).as_secs_f32();
+                    intervals.push(dt);
+                }
+                let avg_interval = intervals.iter().sum::<f32>() / intervals.len() as f32;
+                frequency_to_speed(1.0 / avg_interval)
+            }
+        })?;
     }
 }
 

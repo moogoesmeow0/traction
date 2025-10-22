@@ -61,15 +61,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
-name = "hall"
-version = "0.0.0"
-dependencies = [
- "adxl345_driver2",
- "anyhow",
- "rppal",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.177"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -122,6 +113,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "test"
+version = "0.0.0"
+dependencies = [
+ "adxl345_driver2",
+ "anyhow",
+ "rppal",
 ]
 
 [[package]]
