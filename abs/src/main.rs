@@ -12,6 +12,23 @@ use std::{
     time::{self, Duration},
 };
 
+#[derive(Debug)]
+struct GripState {
+    estimated_pitch: f32,
+    estimated_roll: f32,
+    last_update_time: time::Instant,
+}
+
+impl GripState {
+    fn new() -> Self {
+        Self {
+            estimated_pitch: 0.0,
+            estimated_roll: 0.0,
+            last_update_time: time::Instant::now(),
+        }
+    }
+}
+
 fn main() -> Result<()> {
     println!("Hello, world!");
 
@@ -49,6 +66,7 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
     let magnet_handle = thread::spawn(move || magnets(pin, transmitter));
 
     let mut speeds: VecDeque<(f32, f32)> = VecDeque::new();
+    let mut grip_state = GripState::new();
 
     loop {
         let timer = time::Instant::now();
@@ -65,11 +83,12 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
         }
 
         // Update frequency based on accelerometer readings
-        let has_grip = grip(adxl345.acceleration()?, &speeds);
+        let has_grip = grip(adxl345.acceleration()?, &speeds, &mut grip_state);
 
         // Send frequency update to main thread
         let msg = has_grip;
 
+        println!("grip state: {:?}", &grip_state);
         // If send fails, the receiver has been dropped, so exit
         if tx.send(msg).is_err() {
             break;
@@ -83,7 +102,6 @@ fn magnets(pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
     let mut activated = false;
 
     let timer = time::Instant::now();
-    sleep(Duration::from_millis(5));
 
     loop {
         if pin.is_low() {
@@ -93,6 +111,7 @@ fn magnets(pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
             transmitter.send(0.0).unwrap();
         }
         transmitter.send((frequency_to_speed(1.0 / timer.elapsed().as_secs_f32())));
+        let timer = time::Instant::now();
     }
 }
 
@@ -103,23 +122,28 @@ fn frequency_to_speed(frequency: f32) -> f32 {
     // speed in m/s
 }
 
-/// Determine if grip is good based on wheel acceleration and bike acceleration
-/// acceleration: (x, y, z) from accelerometer
-/// speeds: VecDeque of (speed, delta_time) tuples, lower index is more recent
-fn grip(acceleration: (i16, i16, i16), speeds: &VecDeque<(f32, f32)>) -> bool {
+fn grip(
+    acceleration: (i16, i16, i16),
+    speeds: &VecDeque<(f32, f32)>,
+    state: &mut GripState,
+) -> bool {
     const ACCEL_SCALE: f32 = 2.0 / 512.0;
     const GRAVITY: f32 = 9.81;
-    const CONSISTENCY_THRESHOLD: f32 = 3.0; // m/s² variance threshold
+    const CONSISTENCY_THRESHOLD: f32 = 3.0; // variance threshold (m/s^2)
     const MIN_SPEED: f32 = 0.5;
     const WINDOW_SIZE: usize = 5;
+    const SLIP_THRESHOLD: f32 = 0.30; // % deviation threshold
+    const MAX_GRIP_TOTAL: f32 = 0.8; // Maximum grip coefficient for bike tires on dry road: mu = F_tire / (mass * g)
+    const GRAVITY_FILTER_TAU: f32 = 0.5; // Time constant for low-pass filter (seconds) -- 
+    // smaller = faster response, more noise | larger = slower response, less noise
 
     if speeds.len() < WINDOW_SIZE {
         return true;
     }
 
-    // Calculate wheel acceleration consistency over window
+    // wheel acceleration calculations
     let mut wheel_accels = Vec::new();
-    for i in 0..WINDOW_SIZE - 1 {
+    for i in 0..(WINDOW_SIZE - 1) {
         let (speed_new, _) = speeds[i];
         let (speed_old, dt) = speeds[i + 1];
         if dt > 0.0 {
@@ -131,20 +155,70 @@ fn grip(acceleration: (i16, i16, i16), speeds: &VecDeque<(f32, f32)>) -> bool {
         return true;
     }
 
-    // Calculate variance in wheel acceleration
-    let mean = wheel_accels.iter().sum::<f32>() / wheel_accels.len() as f32;
-    let variance =
-        wheel_accels.iter().map(|a| (a - mean).powi(2)).sum::<f32>() / wheel_accels.len() as f32;
+    let wheel_mean_accel = wheel_accels.iter().sum::<f32>() / wheel_accels.len() as f32;
+    let variance = wheel_accels
+        .iter()
+        .map(|a| (a - wheel_mean_accel).powi(2))
+        .sum::<f32>()
+        / wheel_accels.len() as f32;
 
-    // KEY INSIGHT: When grip is good, wheel acceleration is smooth and consistent
-    // When slipping, wheel acceleration becomes erratic (variance increases)
-    // This works on ANY slope because we're looking at CHANGES, not absolute values
+    let ax = acceleration.0 as f32 * ACCEL_SCALE; // forward/backward
+    let ay = acceleration.1 as f32 * ACCEL_SCALE; // left/right 
+    let az = acceleration.2 as f32 * ACCEL_SCALE; // up/down 
 
-    // Also check for sudden spikes in accelerometer (indicates wheel breaking free)
-    let ax = acceleration.0 as f32 * ACCEL_SCALE * GRAVITY;
-    let sudden_spike = ax.abs() > 7.0; // More than ~0.7g forward acceleration is suspicious
+    let now = time::Instant::now();
+    let dt = now.duration_since(state.last_update_time).as_secs_f32();
+    state.last_update_time = now;
 
-    !sudden_spike && variance < CONSISTENCY_THRESHOLD
+    // Calculate instantaneous pitch and roll angles
+    let pitch_instant = (ax / az.max(0.1)).atan();
+    let roll_instant = (ay / az.max(0.1)).atan();
+
+    // Low-pass filter for pitch and roll
+    let alpha = dt / (GRAVITY_FILTER_TAU + dt);
+
+    // blend estimate with measurement
+    state.estimated_pitch = state.estimated_pitch * (1.0 - alpha) + pitch_instant * alpha;
+    state.estimated_roll = state.estimated_roll * (1.0 - alpha) + roll_instant * alpha;
+
+    // use filtered values for gravity compensation
+    let pitch = state.estimated_pitch;
+    let roll = state.estimated_roll;
+
+    // Gravity components in bike's reference frame (using filtered angles)
+    let gravity_forward = GRAVITY * pitch.sin();
+    let gravity_lateral = GRAVITY * roll.sin();
+
+    // TRUE bike acceleration (motion) = measured - gravity
+    let true_forward_accel = (ax * GRAVITY) - gravity_forward;
+    let true_lateral_accel = (ay * GRAVITY) - gravity_lateral;
+
+    //slippy dippy
+    let variance_ok = variance < CONSISTENCY_THRESHOLD;
+
+    //accelerometer vs wheel speed check
+    let accel_deviation = (true_forward_accel - wheel_mean_accel).abs();
+    let relative_deviation = if wheel_mean_accel.abs() > 1.0 {
+        accel_deviation / wheel_mean_accel.abs()
+    } else {
+        accel_deviation / 2.0
+    };
+    let correlation_ok = relative_deviation < SLIP_THRESHOLD;
+
+    // total grip check
+    let lateral_grip_demand = true_lateral_accel.abs() / GRAVITY;
+    let forward_grip_demand = true_forward_accel.abs() / GRAVITY;
+
+    let total_grip_demand = (lateral_grip_demand.powi(2) + forward_grip_demand.powi(2)).sqrt();
+    let grip_budget_ok = total_grip_demand < MAX_GRIP_TOTAL;
+
+    // spike detection
+    let instant_forward = (ax * GRAVITY) - (GRAVITY * pitch_instant.sin());
+    let instant_lateral = (ay * GRAVITY) - (GRAVITY * roll_instant.sin());
+    let sudden_spike = instant_forward.abs() > 8.0 || instant_lateral.abs() > 8.0;
+
+    // THE FINALE
+    variance_ok && correlation_ok && grip_budget_ok && !sudden_spike
 }
 
 /// Returns readings from device
