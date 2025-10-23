@@ -37,8 +37,8 @@ fn main() -> Result<()> {
     let (emitter1, reciever1) = channel::<bool>();
     let (emitter2, reciever2) = channel::<bool>();
 
-    let tire1_handle = thread::spawn(move || tire(emitter1, 0, 20));
-    let tire2_handle = thread::spawn(move || tire(emitter2, 1, 21));
+    let tire1_handle = thread::spawn(move || tire(emitter1, 0, 23));
+    let tire2_handle = thread::spawn(move || tire(emitter2, 1, 24));
 
     loop {
         if let Ok(msg) = reciever1.try_recv() {

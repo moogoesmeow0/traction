@@ -12,13 +12,15 @@ use std::{
 };
 
 fn main() -> Result<()> {
-    let (mut i2c, mut device, mut pin) = init(0, 23)?;
+    // let (mut i2c, mut device, mut pin) = init(0, 23)?;
+    let gpio = Gpio::new()?;
+    let mut pin = gpio.get(23)?.into_input_pullup();
 
     loop {
         sleep(Duration::from_millis(200));
-        if let Ok((x, y, z)) = device.acceleration() {
-            println!("X: {}, Y: {}, Z: {}", x, y, z);
-        }
+        // if let Ok((x, y, z)) = device.acceleration() {
+        //     println!("X: {}, Y: {}, Z: {}", x, y, z);
+        // }
         if pin.is_low() {
             println!("Pin is LOW");
         } else {
