@@ -2,7 +2,7 @@
 #![allow(unused)]
 use adxl345_driver2::{Adxl345, Adxl345Reader, Adxl345Writer, i2c::Device};
 use anyhow::{Result, *};
-use rppal::gpio::{Gpio, InputPin, Pin};
+use rppal::gpio::{Gpio, InputPin, Level, Pin, Trigger};
 use rppal::{i2c::I2c, system::DeviceInfo};
 use std::collections::VecDeque;
 use std::result::Result::Ok;
@@ -58,7 +58,7 @@ fn main() -> Result<()> {
 
 /// Main loop for the accelerometer and its tire
 fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
-    let (mut i2c, mut adxl345, mut pin) = init(tire_bus, pin_num)?;
+    let (mut adxl345, mut pin) = init(tire_bus, pin_num)?;
     let pin = pin.into_input_pullup();
     let mut current_speed = 1.0;
 
@@ -71,6 +71,8 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
     let mut timer = time::Instant::now();
 
     loop {
+        timer = time::Instant::now();
+
         if let Ok(mag_speed) = reciever.try_recv() {
             speeds.push_back((mag_speed, timer.elapsed().as_secs_f32()));
             if speeds.len() > 50 {
@@ -89,22 +91,32 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
         if tx.send(msg).is_err() {
             break;
         }
-
-        timer = time::Instant::now();
     }
 
     Ok(())
 }
 
-fn magnets(pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
+fn magnets(mut pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
     let mut activated = false;
 
     let mut timer = time::Instant::now();
 
     let mut queue: VecDeque<time::Instant> = VecDeque::new();
 
+    let (tx, rx) = mpsc::channel();
+
+    pin.set_async_interrupt(
+        Trigger::FallingEdge,
+        Some(Duration::from_millis(10)),
+        move |_level| {
+            let _ = tx.send(());
+        },
+    );
+
     loop {
-        if pin.is_low() {
+        if let Ok(_) = rx.recv() {
+            timer = time::Instant::now();
+
             // Magnet detected, idk why low means detected
             queue.push_back(time::Instant::now());
 
@@ -126,8 +138,6 @@ fn magnets(pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
                     frequency_to_speed(1.0 / avg_interval)
                 }
             })?;
-
-            timer = time::Instant::now();
         }
     }
 }
@@ -251,12 +261,11 @@ fn get_readings(adxl345: &mut Device<I2c>) -> Result<(i16, i16, i16)> {
 }
 
 /// generates i2c device and accelerometer
-fn init(bus: u8, pin: u8) -> Result<(I2c, Device<I2c>, Pin)> {
-    let i2c = I2c::with_bus(bus)?;
-    let mut adxl345 = Device::new(I2c::with_bus(bus)?).context("failed").unwrap();
+fn init(bus: u8, pin: u8) -> Result<(Device<I2c>, Pin)> {
+    let mut adxl345 = Device::new(I2c::with_bus(bus)?).context("failed to make adxl345 device")?;
 
     let gpio = Gpio::new()?;
     let mut pin = gpio.get(pin)?;
 
-    return Ok((i2c, adxl345, pin));
+    return Ok((adxl345, pin));
 }
