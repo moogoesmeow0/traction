@@ -107,27 +107,28 @@ fn magnets(pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
         if pin.is_low() {
             // Magnet detected, idk why low means detected
             queue.push_back(time::Instant::now());
+
+            transmitter.send({
+                // calculate frequency by averaging last few intervals
+                if queue.len() < 2 {
+                    0.0
+                } else {
+                    while queue.len() > 5 {
+                        queue.pop_front();
+                    }
+
+                    let mut intervals = Vec::new();
+                    for i in 1..queue.len() {
+                        let dt = queue[i].duration_since(queue[i - 1]).as_secs_f32();
+                        intervals.push(dt);
+                    }
+                    let avg_interval = intervals.iter().sum::<f32>() / intervals.len() as f32;
+                    frequency_to_speed(1.0 / avg_interval)
+                }
+            })?;
+
             timer = time::Instant::now();
         }
-
-        transmitter.send({
-            // calculate frequency by averaging last few intervals
-            if queue.len() < 2 {
-                0.0
-            } else {
-                while queue.len() > 5 {
-                    queue.pop_front();
-                }
-
-                let mut intervals = Vec::new();
-                for i in 1..queue.len() {
-                    let dt = queue[i].duration_since(queue[i - 1]).as_secs_f32();
-                    intervals.push(dt);
-                }
-                let avg_interval = intervals.iter().sum::<f32>() / intervals.len() as f32;
-                frequency_to_speed(1.0 / avg_interval)
-            }
-        })?;
     }
 }
 
@@ -238,7 +239,7 @@ fn grip(
 }
 
 /// Returns readings from device
-fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f32, f32, f32)> {
+fn get_readings(adxl345: &mut Device<I2c>) -> Result<(i16, i16, i16)> {
     println!(
         "I2C started on {}",
         DeviceInfo::new()
@@ -246,7 +247,7 @@ fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f32, f32, f32)> {
             .model()
     );
     let f = adxl345.acceleration()?;
-    Ok((0.0, 0.0, 0.0))
+    Ok(f)
 }
 
 /// generates i2c device and accelerometer
@@ -255,7 +256,7 @@ fn init(bus: u8, pin: u8) -> Result<(I2c, Device<I2c>, Pin)> {
     let mut adxl345 = Device::new(I2c::with_bus(bus)?).context("failed").unwrap();
 
     let gpio = Gpio::new()?;
-    let mut pin = gpio.get(23)?;
+    let mut pin = gpio.get(pin)?;
 
     return Ok((i2c, adxl345, pin));
 }
