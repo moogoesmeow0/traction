@@ -115,6 +115,7 @@ fn magnets(mut pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
     loop {
         if let Ok(_) = rx.recv() {
             timer = time::Instant::now();
+            println!("Magnet detected");
 
             // Magnet detected, idk why low means detected
             queue.push_back(time::Instant::now());
