@@ -2,8 +2,10 @@
 #![allow(unused)]
 use adxl345_driver2::{Adxl345, Adxl345Reader, Adxl345Writer, i2c::Device};
 use anyhow::{Result, *};
+use log::{debug, error, info, log};
 use rppal::gpio::{Gpio, InputPin, Level, Pin, Trigger};
 use rppal::{i2c::I2c, system::DeviceInfo};
+use simplelog::{ColorChoice, Config, LevelFilter, TermLogger, TerminalMode};
 use std::collections::VecDeque;
 use std::result::Result::Ok;
 use std::{
@@ -32,6 +34,17 @@ impl GripState {
 fn main() -> Result<()> {
     println!("Hello, world!");
 
+    TermLogger::init(
+        LevelFilter::Info,
+        Config::default(),
+        TerminalMode::Mixed,
+        ColorChoice::Auto,
+    )?;
+
+    error!("Bright red error");
+    info!("This only appears in the log file");
+    debug!("This level is currently not enabled for any logger");
+
     let mut grip_status = (true, true);
 
     let (emitter1, reciever1) = channel::<bool>();
@@ -41,6 +54,7 @@ fn main() -> Result<()> {
     let tire2_handle = thread::spawn(move || tire(emitter2, 1, 24));
 
     loop {
+        sleep(Duration::from_millis(200));
         if let Ok(msg) = reciever1.try_recv() {
             grip_status.0 = msg;
         }
@@ -49,7 +63,7 @@ fn main() -> Result<()> {
             grip_status.1 = msg;
         }
 
-        println!("status: {:?}", grip_status);
+        info!("status: {:?}", grip_status);
     }
 
     tire1_handle.join().unwrap();
@@ -86,7 +100,7 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
         // Send frequency update to main thread
         let msg = has_grip;
 
-        println!("grip state: {:?}", &grip_state);
+        info!("grip state: {:?}", &grip_state);
         // If send fails, the receiver has been dropped, so exit
         if tx.send(msg).is_err() {
             break;
@@ -127,7 +141,7 @@ fn magnets(mut pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
                 // Magnet detected, idk why low means detected
                 queue.push_front(time::Instant::now());
 
-                transmitter.send({
+                info!("Averaged out speed: {:?}", {
                     // calculate frequency by averaging last few intervals
                     if queue.len() < 2 {
                         0.0
@@ -144,6 +158,10 @@ fn magnets(mut pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
                         let avg_interval = intervals.iter().sum::<f32>() / intervals.len() as f32;
                         frequency_to_speed(1.0 / avg_interval)
                     }
+                });
+
+                transmitter.send({
+                    frequency_to_speed(1.0 / queue[0].duration_since(queue[1]).as_secs_f32())
                 })?;
             }
             Err(_) => {
@@ -261,7 +279,7 @@ fn grip(
 
 /// Returns readings from device
 fn get_readings(adxl345: &mut Device<I2c>) -> Result<(i16, i16, i16)> {
-    println!(
+    info!(
         "I2C started on {}",
         DeviceInfo::new()
             .context("Failed to get new DeviceInfo")?
