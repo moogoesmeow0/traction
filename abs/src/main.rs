@@ -114,30 +114,41 @@ fn magnets(mut pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
     );
 
     loop {
-        if let Ok(_) = rx.recv() {
-            timer = time::Instant::now();
+        match rx.recv_timeout({
+            if queue.len() > 1 {
+                queue[0].duration_since(queue[1]).mul_f32(1.1)
+            } else {
+                Duration::from_millis(200)
+            }
+        }) {
+            Ok(_) => {
+                timer = time::Instant::now();
 
-            // Magnet detected, idk why low means detected
-            queue.push_back(time::Instant::now());
+                // Magnet detected, idk why low means detected
+                queue.push_front(time::Instant::now());
 
-            transmitter.send({
-                // calculate frequency by averaging last few intervals
-                if queue.len() < 2 {
-                    0.0
-                } else {
-                    while queue.len() > 5 {
-                        queue.pop_front();
+                transmitter.send({
+                    // calculate frequency by averaging last few intervals
+                    if queue.len() < 2 {
+                        0.0
+                    } else {
+                        while queue.len() > 5 {
+                            queue.pop_back();
+                        }
+
+                        let mut intervals = Vec::new();
+                        for i in 0..(queue.len() - 1) {
+                            let dt = queue[i].duration_since(queue[i + 1]).as_secs_f32();
+                            intervals.push(dt);
+                        }
+                        let avg_interval = intervals.iter().sum::<f32>() / intervals.len() as f32;
+                        frequency_to_speed(1.0 / avg_interval)
                     }
-
-                    let mut intervals = Vec::new();
-                    for i in 1..queue.len() {
-                        let dt = queue[i].duration_since(queue[i - 1]).as_secs_f32();
-                        intervals.push(dt);
-                    }
-                    let avg_interval = intervals.iter().sum::<f32>() / intervals.len() as f32;
-                    frequency_to_speed(1.0 / avg_interval)
-                }
-            })?;
+                })?;
+            }
+            Err(_) => {
+                transmitter.send(frequency_to_speed(1.0 / timer.elapsed().as_secs_f32()))?;
+            }
         }
     }
 }
