@@ -107,6 +107,7 @@ fn magnets(mut pin: InputPin, transmitter: Sender<f32>) -> Result<()> {
         Some(Duration::from_millis(10)),
         move |_level| {
             let _ = tx.send(());
+            println!("magnet detected");
         },
     );
 
