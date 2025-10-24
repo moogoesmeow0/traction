@@ -279,13 +279,8 @@ fn grip(
 
 /// Returns readings from device
 fn get_readings(adxl345: &mut Device<I2c>) -> Result<(i16, i16, i16)> {
-    info!(
-        "I2C started on {}",
-        DeviceInfo::new()
-            .context("Failed to get new DeviceInfo")?
-            .model()
-    );
     let f = adxl345.acceleration()?;
+    info!("acceleration: {:?}", f);
     Ok(f)
 }
 
