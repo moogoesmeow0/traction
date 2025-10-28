@@ -41,9 +41,6 @@ fn main() -> Result<()> {
         ColorChoice::Auto,
     )?;
 
-    error!("Bright red error");
-    info!("This only appears in the log file");
-    debug!("This level is currently not enabled for any logger");
     info!(
         "pi model: {:?}",
         DeviceInfo::new()
@@ -54,29 +51,32 @@ fn main() -> Result<()> {
             .model()
     );
 
-    let mut grip_status = (true, true);
+    // let mut grip_status = (true, true);
+    //
+    // let (emitter1, reciever1) = channel::<bool>();
+    // let (emitter2, reciever2) = channel::<bool>();
+    //
+    // let tire1_handle = thread::spawn(move || tire(emitter1, 0, 23));
+    // let tire2_handle = thread::spawn(move || tire(emitter2, 1, 24));
 
-    let (emitter1, reciever1) = channel::<bool>();
-    let (emitter2, reciever2) = channel::<bool>();
-
-    let tire1_handle = thread::spawn(move || tire(emitter1, 0, 23));
-    let tire2_handle = thread::spawn(move || tire(emitter2, 1, 24));
+    let (mut adxl345, _) = init(0, 23)?;
 
     loop {
         sleep(Duration::from_millis(200));
-        if let Ok(msg) = reciever1.try_recv() {
-            grip_status.0 = msg;
-        }
-
-        if let Ok(msg) = reciever2.try_recv() {
-            grip_status.1 = msg;
-        }
-
-        info!("status: {:?}", grip_status);
+        // if let Ok(msg) = reciever1.try_recv() {
+        //     grip_status.0 = msg;
+        // }
+        //
+        // if let Ok(msg) = reciever2.try_recv() {
+        //     grip_status.1 = msg;
+        // }
+        //
+        // info!("status: {:?}", grip_status);
+        info!("readings: {:?}", get_readings(&mut adxl345)?);
     }
 
-    tire1_handle.join().unwrap();
-    tire2_handle.join().unwrap();
+    // tire1_handle.join().unwrap();
+    // tire2_handle.join().unwrap();
 }
 
 /// Main loop for the accelerometer and its tire
