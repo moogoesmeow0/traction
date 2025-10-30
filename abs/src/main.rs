@@ -59,8 +59,8 @@ fn main() -> Result<()> {
     let (emitter1, reciever1) = channel::<bool>();
     let (emitter2, reciever2) = channel::<bool>();
 
-    let tire1_handle = thread::spawn(move || tire(emitter1, 0, 23));
-    let tire2_handle = thread::spawn(move || tire(emitter2, 1, 24));
+    let tire1_handle = thread::spawn(move || tire(emitter1, 0, 23, 0x53));
+    let tire2_handle = thread::spawn(move || tire(emitter2, 1, 24, 0x53));
 
     loop {
         sleep(Duration::from_millis(200));
@@ -80,8 +80,8 @@ fn main() -> Result<()> {
 }
 
 /// Main loop for the accelerometer and its tire
-fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
-    let (mut adxl345, mut pin) = init(tire_bus, pin_num)?;
+fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8, id: u8) -> Result<()> {
+    let (mut adxl345, mut pin) = init(tire_bus, id, pin_num)?;
     let pin = pin.into_input_pullup();
     let mut current_speed = 1.0;
 
@@ -286,19 +286,46 @@ fn grip(
     variance_ok && correlation_ok && grip_budget_ok && !sudden_spike
 }
 
+/// Average Earth gravity in m/s²
+const EARTH_GRAVITY_MS2: f64 = 9.80665;
+const ACCEL_RAW_TO_G: f64 = 256.0;
+
 /// Returns readings from device
-fn get_readings(adxl345: &mut Device<I2c>) -> Result<(i16, i16, i16)> {
-    let f = adxl345.acceleration()?;
-    info!("acceleration: {:?}", f);
-    Ok(f)
+fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f64, f64, f64)> {
+    let (x_raw, y_raw, z_raw) = adxl345
+        .acceleration()
+        .context("Failed to get acceleration data")?;
+
+    // Convert raw sensor values to g
+    let x_g = x_raw as f64 / ACCEL_RAW_TO_G;
+    let y_g = y_raw as f64 / ACCEL_RAW_TO_G;
+    let z_g = z_raw as f64 / ACCEL_RAW_TO_G;
+
+    info!("acceleration in g: {:?}", (x_g, y_g, z_g));
+
+    let x = x_g as f64 * EARTH_GRAVITY_MS2;
+    let y = y_g as f64 * EARTH_GRAVITY_MS2;
+    let z = z_g as f64 * EARTH_GRAVITY_MS2;
+    Ok((x, y, z))
 }
 
 /// generates i2c device and accelerometer
-fn init(bus: u8, pin: u8) -> Result<(Device<I2c>, Pin)> {
-    let mut adxl345 = Device::new(I2c::with_bus(bus)?).context("failed to make adxl345 device")?;
+fn init(bus: u8, id: u8, pin: u8) -> Result<(Device<I2c>, Pin)> {
+    let mut adxl345 = Device::with_address(I2c::new()?, id)?;
+
+    // Set full scale output and range to 2G.
+    adxl345
+        .set_data_format(8)
+        .context("Failed to set data format")?;
+    // Set measurement mode on.
+    adxl345
+        .set_power_control(8)
+        .context("Failed to turn on measurement mode")?;
+
+    let id = adxl345.device_id().context("Failed to get device id")?;
+    println!("Device id = {}", id);
 
     let gpio = Gpio::new()?;
     let mut pin = gpio.get(pin)?;
-
-    return Ok((adxl345, pin));
+    Ok((adxl345, pin))
 }
