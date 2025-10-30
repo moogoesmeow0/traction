@@ -59,7 +59,10 @@ fn main() -> Result<()> {
     // let tire1_handle = thread::spawn(move || tire(emitter1, 0, 23));
     // let tire2_handle = thread::spawn(move || tire(emitter2, 1, 24));
 
-    let (mut adxl345, _) = init(0, 23)?;
+    let (mut adxl345, _) = init(1, 0x53, 23)?;
+
+    let id = adxl345.device_id().context("Failed to get device id")?;
+    println!("Device id = {}", id);
 
     loop {
         sleep(Duration::from_millis(200));
@@ -286,16 +289,43 @@ fn grip(
     variance_ok && correlation_ok && grip_budget_ok && !sudden_spike
 }
 
+/// Output scale is 4mg/LSB.
+const SCALE_MULTIPLIER: f64 = 0.004;
+/// Average Earth gravity in m/s²
+const EARTH_GRAVITY_MS2: f64 = 9.80665;
+
 /// Returns readings from device
-fn get_readings(adxl345: &mut Device<I2c>) -> Result<(i16, i16, i16)> {
+fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f64, f64, f64)> {
     let f = adxl345.acceleration()?;
     info!("acceleration: {:?}", f);
-    Ok(f)
+    let (x, y, z) = adxl345
+        .acceleration()
+        .context("Failed to get acceleration data")?;
+    let x = x as f64 * SCALE_MULTIPLIER * EARTH_GRAVITY_MS2;
+    let y = y as f64 * SCALE_MULTIPLIER * EARTH_GRAVITY_MS2;
+    let z = z as f64 * SCALE_MULTIPLIER * EARTH_GRAVITY_MS2;
+    println!(
+        "axis: {{'x': {:1.4}, 'y': {:1.4}, 'z': {:1.4}}} m/s²",
+        x, y, z
+    );
+    Ok((x, y, z))
 }
 
 /// generates i2c device and accelerometer
-fn init(bus: u8, pin: u8) -> Result<(Device<I2c>, Pin)> {
-    let mut adxl345 = Device::new(I2c::with_bus(bus)?).context("failed to make adxl345 device")?;
+fn init(bus: u8, id: u8, pin: u8) -> Result<(Device<I2c>, Pin)> {
+    let mut adxl345 = Device::with_address(I2c::new()?, id)?;
+
+    // Set full scale output and range to 2G.
+    adxl345
+        .set_data_format(8)
+        .context("Failed to set data format")?;
+    // Set measurement mode on.
+    adxl345
+        .set_power_control(8)
+        .context("Failed to turn on measurement mode")?;
+
+    let id = adxl345.device_id().context("Failed to get device id")?;
+    println!("Device id = {}", id);
 
     let gpio = Gpio::new()?;
     let mut pin = gpio.get(pin)?;
