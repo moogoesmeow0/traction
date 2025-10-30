@@ -289,8 +289,6 @@ fn grip(
     variance_ok && correlation_ok && grip_budget_ok && !sudden_spike
 }
 
-/// Output scale is 4mg/LSB.
-const SCALE_MULTIPLIER: f64 = 0.004;
 /// Average Earth gravity in m/s²
 const EARTH_GRAVITY_MS2: f64 = 9.80665;
 
@@ -298,12 +296,15 @@ const EARTH_GRAVITY_MS2: f64 = 9.80665;
 fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f64, f64, f64)> {
     let f = adxl345.acceleration()?;
     info!("acceleration: {:?}", f);
-    let (x, y, z) = adxl345
+    let (x_g, y_g, z_g) = adxl345
         .acceleration()
         .context("Failed to get acceleration data")?;
-    let x = x as f64 * SCALE_MULTIPLIER * EARTH_GRAVITY_MS2;
-    let y = y as f64 * SCALE_MULTIPLIER * EARTH_GRAVITY_MS2;
-    let z = z as f64 * SCALE_MULTIPLIER * EARTH_GRAVITY_MS2;
+
+    info!("acceleration in g: {:?}", (x_g, y_g, z_g));
+
+    let x = x_g as f64 * EARTH_GRAVITY_MS2;
+    let y = y_g as f64 * EARTH_GRAVITY_MS2;
+    let z = z_g as f64 * EARTH_GRAVITY_MS2;
     println!(
         "axis: {{'x': {:1.4}, 'y': {:1.4}, 'z': {:1.4}}} m/s²",
         x, y, z
