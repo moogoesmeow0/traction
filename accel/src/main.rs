@@ -83,8 +83,8 @@ fn main() -> Result<()> {
 }
 
 /// Main loop for the accelerometer and its tire
-fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8) -> Result<()> {
-    let (mut adxl345, mut pin) = init(tire_bus, pin_num)?;
+fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8, id: u8) -> Result<()> {
+    let (mut adxl345, mut pin) = init(tire_bus, id, pin_num)?;
     let pin = pin.into_input_pullup();
     let mut current_speed = 1.0;
 
