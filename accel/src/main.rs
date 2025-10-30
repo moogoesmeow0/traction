@@ -75,7 +75,8 @@ fn main() -> Result<()> {
         // }
         //
         // info!("status: {:?}", grip_status);
-        info!("readings: {:?}", get_readings(&mut adxl345)?);
+        // info!("readings: {:?}", get_readings(&mut adxl345)?);
+        get_readings(&mut adxl345);
     }
 
     // tire1_handle.join().unwrap();
@@ -291,12 +292,18 @@ fn grip(
 
 /// Average Earth gravity in m/s²
 const EARTH_GRAVITY_MS2: f64 = 9.80665;
+const ACCEL_RAW_TO_G: f64 = 256.0;
 
 /// Returns readings from device
 fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f64, f64, f64)> {
-    let (x_g, y_g, z_g) = adxl345
+    let (x_raw, y_raw, z_raw) = adxl345
         .acceleration()
         .context("Failed to get acceleration data")?;
+
+    // Convert raw sensor values to g's
+    let x_g = x_raw as f64 / ACCEL_RAW_TO_G;
+    let y_g = y_raw as f64 / ACCEL_RAW_TO_G;
+    let z_g = z_raw as f64 / ACCEL_RAW_TO_G;
 
     info!("acceleration in g: {:?}", (x_g, y_g, z_g));
 
