@@ -294,8 +294,6 @@ const EARTH_GRAVITY_MS2: f64 = 9.80665;
 
 /// Returns readings from device
 fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f64, f64, f64)> {
-    let f = adxl345.acceleration()?;
-    info!("acceleration: {:?}", f);
     let (x_g, y_g, z_g) = adxl345
         .acceleration()
         .context("Failed to get acceleration data")?;
@@ -305,10 +303,6 @@ fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f64, f64, f64)> {
     let x = x_g as f64 * EARTH_GRAVITY_MS2;
     let y = y_g as f64 * EARTH_GRAVITY_MS2;
     let z = z_g as f64 * EARTH_GRAVITY_MS2;
-    println!(
-        "axis: {{'x': {:1.4}, 'y': {:1.4}, 'z': {:1.4}}} m/s²",
-        x, y, z
-    );
     Ok((x, y, z))
 }
 
