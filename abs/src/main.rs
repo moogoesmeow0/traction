@@ -88,7 +88,7 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8, id: u8) -> Result<()> {
     let (transmitter, reciever) = channel::<f32>();
     let magnet_handle = thread::spawn(move || magnets(pin, transmitter));
 
-    let mut speeds: VecDeque<(f32, f32)> = VecDeque::new();
+    let mut speeds: VecDeque<(f32, time::Instant)> = VecDeque::new();
     let mut grip_state = GripState::new();
 
     let mut timer = time::Instant::now();
@@ -97,7 +97,7 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8, id: u8) -> Result<()> {
         timer = time::Instant::now();
 
         if let Ok(mag_speed) = reciever.try_recv() {
-            speeds.push_back((mag_speed, timer.elapsed().as_secs_f32()));
+            speeds.push_back((mag_speed, timer));
             if speeds.len() > 50 {
                 speeds.pop_front();
             }
@@ -187,9 +187,12 @@ fn frequency_to_speed(frequency: f32) -> f32 {
     // speed in m/s
 }
 
+/// Determines if the tire has grip based on accelerometer and wheel speed data
+/// # Arguments
+/// * `acceleration` - Tuple of (ax, ay, az) accelerations in m/s^2
 fn grip(
-    acceleration: (f64, f64, f64),
-    speeds: &VecDeque<(f32, f32)>,
+    acceleration: (f32, f32, f32),
+    speeds: &VecDeque<(f32, time::Instant)>, // Changed to store Instant
     state: &mut GripState,
 ) -> bool {
     const ACCEL_SCALE: f32 = 2.0 / 512.0;
@@ -208,9 +211,10 @@ fn grip(
 
     // wheel acceleration calculations
     let mut wheel_accels = Vec::new();
-    for i in 0..(WINDOW_SIZE - 1) {
-        let (speed_new, _) = speeds[i];
-        let (speed_old, dt) = speeds[i + 1];
+    for i in 0..(speeds.len() - 1) {
+        let (speed_new, time_new) = speeds[i];
+        let (speed_old, time_old) = speeds[i + 1];
+        let dt = time_new.duration_since(time_old).as_secs_f32();
         if dt > 0.0 {
             wheel_accels.push((speed_new - speed_old) / dt);
         }
@@ -227,19 +231,22 @@ fn grip(
         .sum::<f32>()
         / wheel_accels.len() as f32;
 
-    let ax = acceleration.0 as f32 * ACCEL_SCALE; // forward/backward
-    let ay = acceleration.1 as f32 * ACCEL_SCALE; // left/right 
-    let az = acceleration.2 as f32 * ACCEL_SCALE; // up/down 
+    let ax = acceleration.0; // backward/forward
+    let ay = acceleration.1; // left/right 
+    let az = acceleration.2; // up/down 
 
     let now = time::Instant::now();
     let dt = now.duration_since(state.last_update_time).as_secs_f32();
     state.last_update_time = now;
 
-    // Calculate instantaneous pitch and roll angles
-    let pitch_instant = (ax / az.max(0.1)).atan();
-    let roll_instant = (ay / az.max(0.1)).atan();
+    // --- CORRECTED MATH ---
+    // Calculate instantaneous pitch and roll angles based on the specified coordinate system.
+    // Pitch: Rotation around Y-axis. Positive pitch = front of bike is tilted UP.
+    // Roll: Rotation around X-axis. Positive roll = bike is tilted to the RIGHT.
+    let pitch_instant = ax.atan2((ay.powi(2) + az.powi(2)).sqrt());
+    let roll_instant = ay.atan2(az);
 
-    // Low-pass filter for pitch and roll
+    // Low-pass filter for pitch and roll (this part is correct)
     let alpha = dt / (GRAVITY_FILTER_TAU + dt);
 
     // blend estimate with measurement
@@ -251,12 +258,15 @@ fn grip(
     let roll = state.estimated_roll;
 
     // Gravity components in bike's reference frame (using filtered angles)
-    let gravity_forward = GRAVITY * pitch.sin();
-    let gravity_lateral = GRAVITY * roll.sin();
+    // These formulas are derived from rotating the gravity vector (-g in Z) into the bike's frame.
+    let gravity_backward = GRAVITY * pitch.sin(); // Component of gravity along the +X (backward) axis
+    let gravity_lateral = -GRAVITY * pitch.cos() * roll.sin(); // Component of gravity along the +Y (right) axis
 
     // TRUE bike acceleration (motion) = measured - gravity
-    let true_forward_accel = (ax * GRAVITY) - gravity_forward;
-    let true_lateral_accel = (ay * GRAVITY) - gravity_lateral;
+    // Note: We negate wheel_mean_accel because it's a forward acceleration, but our axis `ax` is backward.
+    let true_backward_accel = ax - gravity_backward;
+    let true_lateral_accel = ay - gravity_lateral;
+    let true_forward_accel = -true_backward_accel;
 
     //slippy dippy
     let variance_ok = variance < CONSISTENCY_THRESHOLD;
@@ -266,40 +276,44 @@ fn grip(
     let relative_deviation = if wheel_mean_accel.abs() > 1.0 {
         accel_deviation / wheel_mean_accel.abs()
     } else {
-        accel_deviation / 2.0
+        accel_deviation
     };
     let correlation_ok = relative_deviation < SLIP_THRESHOLD;
 
     // total grip check
+    // We use the magnitude of true acceleration, so signs don't matter here.
     let lateral_grip_demand = true_lateral_accel.abs() / GRAVITY;
     let forward_grip_demand = true_forward_accel.abs() / GRAVITY;
 
     let total_grip_demand = (lateral_grip_demand.powi(2) + forward_grip_demand.powi(2)).sqrt();
     let grip_budget_ok = total_grip_demand < MAX_GRIP_TOTAL;
 
-    // spike detection
-    let instant_forward = (ax * GRAVITY) - (GRAVITY * pitch_instant.sin());
-    let instant_lateral = (ay * GRAVITY) - (GRAVITY * roll_instant.sin());
+    // spike detection (using instantaneous angles for responsiveness)
+    let instant_gravity_backward = GRAVITY * pitch_instant.sin();
+    let instant_gravity_lateral = -GRAVITY * pitch_instant.cos() * roll_instant.sin();
+    
+    let instant_forward = -(ax - instant_gravity_backward);
+    let instant_lateral = ay - instant_gravity_lateral;
     let sudden_spike = instant_forward.abs() > 8.0 || instant_lateral.abs() > 8.0;
 
     // THE FINALE
     variance_ok && correlation_ok && grip_budget_ok && !sudden_spike
 }
-
 /// Average Earth gravity in m/s²
-const EARTH_GRAVITY_MS2: f64 = 9.80665;
-const ACCEL_RAW_TO_G: f64 = 256.0;
+const EARTH_GRAVITY_MS2: f32 = 9.80665;
+const ACCEL_RAW_TO_G: f32 = 256.0;
 
 /// Returns readings from device
-fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f64, f64, f64)> {
+/// returns (ax, ay, az) in m/s²
+fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f32, f32, f32)> {
     let (x_raw, y_raw, z_raw) = adxl345
         .acceleration()
         .context("Failed to get acceleration data")?;
 
     // Convert raw sensor values to g
-    let x_g = x_raw as f64 / ACCEL_RAW_TO_G;
-    let y_g = y_raw as f64 / ACCEL_RAW_TO_G;
-    let z_g = z_raw as f64 / ACCEL_RAW_TO_G;
+    let x_g = x_raw as f32 / ACCEL_RAW_TO_G;
+    let y_g = y_raw as f32 / ACCEL_RAW_TO_G;
+    let z_g = z_raw as f32 / ACCEL_RAW_TO_G;
 
     info!("acceleration in g: {:?}", (x_g, y_g, z_g));
 
