@@ -196,7 +196,7 @@ fn grip(
     speeds: &VecDeque<(f32, f32)>,
     state: &mut GripState,
 ) -> bool {
-    const ACCEL_SCALE: f32 = 2.0 / 512.0;
+    const ACCEL_RAW_TO_G_F32: f32 = 256.0;
     const GRAVITY: f32 = 9.81;
     const CONSISTENCY_THRESHOLD: f32 = 3.0; // variance threshold (m/s^2)
     const MIN_SPEED: f32 = 0.5;
@@ -231,17 +231,18 @@ fn grip(
         .sum::<f32>()
         / wheel_accels.len() as f32;
 
-    let ax = acceleration.0 as f32 * ACCEL_SCALE; // forward/backward
-    let ay = acceleration.1 as f32 * ACCEL_SCALE; // left/right 
-    let az = acceleration.2 as f32 * ACCEL_SCALE; // up/down 
+    // Convert raw accelerometer values to g's
+    let ax_g = acceleration.0 as f32 / ACCEL_RAW_TO_G_F32; // forward/backward in g's
+    let ay_g = acceleration.1 as f32 / ACCEL_RAW_TO_G_F32; // left/right in g's
+    let az_g = acceleration.2 as f32 / ACCEL_RAW_TO_G_F32; // up/down in g's
 
     let now = time::Instant::now();
     let dt = now.duration_since(state.last_update_time).as_secs_f32();
     state.last_update_time = now;
 
-    // Calculate instantaneous pitch and roll angles
-    let pitch_instant = (ax / az.max(0.1)).atan();
-    let roll_instant = (ay / az.max(0.1)).atan();
+    // Calculate instantaneous pitch and roll angles from g-force values
+    let pitch_instant = (ax_g / az_g.max(0.1)).atan();
+    let roll_instant = (ay_g / az_g.max(0.1)).atan();
 
     // Low-pass filter for pitch and roll
     let alpha = dt / (GRAVITY_FILTER_TAU + dt);
@@ -254,13 +255,17 @@ fn grip(
     let pitch = state.estimated_pitch;
     let roll = state.estimated_roll;
 
-    // Gravity components in bike's reference frame (using filtered angles)
+    // Gravity components in bike's reference frame (in m/s^2)
     let gravity_forward = GRAVITY * pitch.sin();
     let gravity_lateral = GRAVITY * roll.sin();
 
+    // Measured acceleration in m/s^2
+    let measured_forward_accel = ax_g * GRAVITY;
+    let measured_lateral_accel = ay_g * GRAVITY;
+
     // TRUE bike acceleration (motion) = measured - gravity
-    let true_forward_accel = (ax * GRAVITY) - gravity_forward;
-    let true_lateral_accel = (ay * GRAVITY) - gravity_lateral;
+    let true_forward_accel = measured_forward_accel - gravity_forward;
+    let true_lateral_accel = measured_lateral_accel - gravity_lateral;
 
     //slippy dippy
     let variance_ok = variance < CONSISTENCY_THRESHOLD;
@@ -282,8 +287,8 @@ fn grip(
     let grip_budget_ok = total_grip_demand < MAX_GRIP_TOTAL;
 
     // spike detection
-    let instant_forward = (ax * GRAVITY) - (GRAVITY * pitch_instant.sin());
-    let instant_lateral = (ay * GRAVITY) - (GRAVITY * roll_instant.sin());
+    let instant_forward = (ax_g * GRAVITY) - (GRAVITY * pitch_instant.sin());
+    let instant_lateral = (ay_g * GRAVITY) - (GRAVITY * roll_instant.sin());
     let sudden_spike = instant_forward.abs() > 8.0 || instant_lateral.abs() > 8.0;
 
     // THE FINALE

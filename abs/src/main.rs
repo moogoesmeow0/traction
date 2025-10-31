@@ -60,7 +60,7 @@ fn main() -> Result<()> {
     let (emitter2, reciever2) = channel::<bool>();
 
     let tire1_handle = thread::spawn(move || tire(emitter1, 0, 23, 0x53));
-    let tire2_handle = thread::spawn(move || tire(emitter2, 1, 24, 0x53));
+    let tire2_handle = thread::spawn(move || tire(emitter2, 1, 24, 0x1D));
 
     loop {
         sleep(Duration::from_millis(200));
@@ -104,7 +104,7 @@ fn tire(tx: Sender<bool>, tire_bus: u8, pin_num: u8, id: u8) -> Result<()> {
         }
 
         // Update frequency based on accelerometer readings
-        let has_grip = grip(adxl345.acceleration()?, &speeds, &mut grip_state);
+        let has_grip = grip(get_readings(&mut adxl345)?, &speeds, &mut grip_state);
 
         // Send frequency update to main thread
         let msg = has_grip;
@@ -188,7 +188,7 @@ fn frequency_to_speed(frequency: f32) -> f32 {
 }
 
 fn grip(
-    acceleration: (i16, i16, i16),
+    acceleration: (f64, f64, f64),
     speeds: &VecDeque<(f32, f32)>,
     state: &mut GripState,
 ) -> bool {
@@ -303,9 +303,9 @@ fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f64, f64, f64)> {
 
     info!("acceleration in g: {:?}", (x_g, y_g, z_g));
 
-    let x = x_g as f64 * EARTH_GRAVITY_MS2;
-    let y = y_g as f64 * EARTH_GRAVITY_MS2;
-    let z = z_g as f64 * EARTH_GRAVITY_MS2;
+    let x = x_g * EARTH_GRAVITY_MS2;
+    let y = y_g * EARTH_GRAVITY_MS2;
+    let z = z_g * EARTH_GRAVITY_MS2;
     Ok((x, y, z))
 }
 
