@@ -291,7 +291,7 @@ fn grip(
     // spike detection (using instantaneous angles for responsiveness)
     let instant_gravity_backward = GRAVITY * pitch_instant.sin();
     let instant_gravity_lateral = -GRAVITY * pitch_instant.cos() * roll_instant.sin();
-    
+
     let instant_forward = -(ax - instant_gravity_backward);
     let instant_lateral = ay - instant_gravity_lateral;
     let sudden_spike = instant_forward.abs() > 8.0 || instant_lateral.abs() > 8.0;
@@ -301,7 +301,7 @@ fn grip(
 }
 /// Average Earth gravity in m/s²
 const EARTH_GRAVITY_MS2: f32 = 9.80665;
-const ACCEL_RAW_TO_G: f32 = 256.0;
+const ACCEL_RAW_TO_G: f32 = 289.0;
 
 /// Returns readings from device
 /// returns (ax, ay, az) in m/s²

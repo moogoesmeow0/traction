@@ -289,7 +289,7 @@ fn grip(
 
 /// Average Earth gravity in m/s²
 const EARTH_GRAVITY_MS2: f64 = 9.80665;
-const ACCEL_RAW_TO_G: f64 = 256.0;
+const ACCEL_RAW_TO_G: f64 = 289.0;
 
 /// Returns readings from device
 fn get_readings(adxl345: &mut Device<I2c>) -> Result<(f64, f64, f64)> {
